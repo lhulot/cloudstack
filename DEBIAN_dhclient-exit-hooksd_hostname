@@ -1,0 +1,35 @@
+#!/bin/sh
+# Filename: /etc/dhcp3/hostname
+# Purpose: Used by dhclient-script to set the hostname of the system
+# to match the DNS information for the host as provided by
+# DHCP.
+# Depends: dhcp3-client
+# hostname
+#
+if [ "$reason" != BOUND ] && [ "$reason" != RENEW ] \
+ && [ "$reason" != REBIND ] && [ "$reason" != REBOOT ]
+then
+  return
+fi
+
+if [ -r /etc/rc.d/init.d/functions ]; then
+    . /etc/rc.d/init.d/functions
+fi
+if [ -r /lib/lsb/init-functions ]; then
+    . /lib/lsb/init-functions
+fi
+
+logger -t "cloud" "hostname: Dynamic IP address = $new_ip_address"
+
+#We get the old host name
+old_host_name=`hostname`
+
+#We set the new host name from DHCP
+echo ${new_host_name} > /etc/hostname
+hostname ${new_host_name}
+
+#We replace all occurences of the old name with the new
+sed -e "s/${old_host_name}/${new_host_name}/g" -i /etc/hosts
+
+logger -t "cloud" "hostname: Dynamic Hostname = $new_host_name"
+# And that _should_ just about do it...
