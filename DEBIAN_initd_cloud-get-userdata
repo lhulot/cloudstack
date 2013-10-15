@@ -1,0 +1,115 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:          cloud-get-userdata
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Should-Start:      $named
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Script userdata
+# Description:       Execute userdata command
+### END INIT INFO
+
+#
+# chkconfig: 2345 98 02
+# processname: cloud-get-userdata
+
+#User whose password is changed. To change to 'administrator' under Ubuntu.
+user=root
+
+# Add your DHCP lease folders here
+DHCP_FOLDERS="/var/lib/dhclient/* /var/lib/dhcp3/* /var/lib/dhcp/* /var/lib/NetworkManager/* /var/lib/dhcpcd/*"
+userdata_received=0
+file_count=0
+error_count=0
+
+if [ -r /etc/rc.d/init.d/functions ]; then
+    . /etc/rc.d/init.d/functions
+fi
+if [ -r /lib/lsb/init-functions ]; then
+    . /lib/lsb/init-functions
+fi
+
+echo "Starting Userdata Download Client"
+
+case "$1" in
+	start)
+		for DHCP_FILE in $DHCP_FOLDERS ; do
+			if [ -r $DHCP_FILE ] ; then
+				logger -t "cloud" "DHCP_FILE : $DHCP_FILE"
+				file_count=$((file_count+1))
+				USERDATA_SERVER_IP=`grep dhcp-server-identifier $DHCP_FILE | tail -n1 | awk '{print $NF}' | tr -d '\;'`
+				logger -t "cloud" "USERDATA_SERVER_IP : $USERDATA_SERVER_IP"
+
+				if [ -n "$USERDATA_SERVER_IP" ] ; then
+					sleep 3
+			        logger -t "cloud" "cloud-get-userdata: Found userdata server IP $USERDATA_SERVER_IP in $DHCP_FILE"
+        			logger -t "cloud" "cloud-get-userdata: Sending request to userdata server at $USERDATA_SERVER_IP"
+        			userdata=`curl -s http://$USERDATA_SERVER_IP/latest/user-data`
+
+        				if [ $? -eq 0 ] ; then
+                				logger -t "cloud" "cloud-get-userdata: Got response from server at $USERDATA_SERVER_IP"
+                				case $userdata in
+
+                        			"")
+                                		logger -t "cloud" "cloud-get-userdata: Userdata server at $USERDATA_SERVER_IP did not have any userdata for the VM"
+						continue
+                                		;;
+                        			*)
+                                		logger -t "cloud" "cloud-get-userdata: VM got a valid userdata from server at $USERDATA_SERVER_IP"
+                                		userdata_received=1
+						break
+                                		;;
+                				esac
+        				else
+                				logger -t "cloud" "cloud-get-userdata: Failed to send request to userdata server at $USERDATA_SERVER_IP"
+                				error_count=$((error_count+1))
+        				fi
+				else
+        			logger -t "cloud" "cloud-get-userdata: Could not find userdata server IP in $DHCP_FILE"
+        			error_count=$((error_count+1))
+				fi
+			fi
+		done
+if [ $userdata_received -eq 0 ] ; then
+        if [ $error_count -eq $file_count ] ; then
+                logger -t "cloud" "cloud-get-userdata: Failed to get userdata from any server"
+                exit 1
+        else
+                logger -t "cloud" "cloud-get-userdata: Did not need to get userdata."
+                exit 0
+        fi
+fi
+
+if [ $userdata_received -eq 1 ] ; then
+        logger -t "cloud" "cloud-get-userdata: Executing userdata script..."
+#        echo $userdata | xargs wget {} -O - | sh
+	eval "$userdata" 1> /var/log/cloud-get-userdata.log 2>&1 
+        if [ $? -eq 0 ] ; then
+                logger -t "cloud" "cloud-get-userdata: Done executing userdata script."
+
+        else
+                logger -t "cloud" "cloud-get-userdata: ERROR executing userdata script."
+                exit 1
+        fi
+fi
+
+             exit 0
+        ;;
+
+        restart|reload|force-reload)
+        echo "Error: argument '$1' not supported" >&2
+        exit 3
+        ;;
+
+        stop)
+        # No-op
+                exit 0
+        ;;
+
+        ""|*)
+        echo "Usage: /etc/init.d/cloud-get-userdata {start|stop}" >&2
+        exit 3
+        ;;
+esac
